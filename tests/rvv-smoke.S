@@ -1813,6 +1813,68 @@ _start:
     csrr t1, vl
     assert_reg_imm t1, 4, fail_fractional
 
+    # ===== vmv<nr>r.v whole-register move (V 1.0 §16.6) =====
+    # Smoke: copy NREG whole vector registers and verify head/tail bytes.
+    csrwi vstart, 0
+    vsetvli t0, x0, e8, m1, ta, mu
+
+    # vmv1r.v v4, v2: copy 1 register (16 bytes)
+    la a1, whole_src
+    vle8.v v2, (a1)
+    vmv1r.v v4, v2
+    la a1, whole_out
+    vse8.v v4, (a1)
+    la t0, whole_out
+    lbu t1, 0(t0)
+    assert_reg_imm t1, 0x00, fail_vmvnr
+    lbu t1, 15(t0)
+    assert_reg_imm t1, 0x0f, fail_vmvnr
+
+    # vmv2r.v v6, v2: copy 2 registers (32 bytes)
+    la a1, whole_src
+    vle8.v v2, (a1)
+    addi a1, a1, 16
+    vle8.v v3, (a1)
+    vmv2r.v v6, v2
+    la a1, whole_out
+    vse8.v v6, (a1)
+    addi a1, a1, 16
+    vse8.v v7, (a1)
+    la t0, whole_out
+    lbu t1, 0(t0)
+    assert_reg_imm t1, 0x00, fail_vmvnr
+    lbu t1, 15(t0)
+    assert_reg_imm t1, 0x0f, fail_vmvnr
+    lbu t1, 16(t0)
+    assert_reg_imm t1, 0x10, fail_vmvnr
+    lbu t1, 31(t0)
+    assert_reg_imm t1, 0x1f, fail_vmvnr
+
+    # vmv4r.v v8, v4: copy 4 registers (source data limited to 16 bytes;
+    # verify first register's head/tail only).
+    la a1, whole_src
+    vle8.v v4, (a1)
+    vmv4r.v v8, v4
+    la a1, whole_out
+    vse8.v v8, (a1)
+    la t0, whole_out
+    lbu t1, 0(t0)
+    assert_reg_imm t1, 0x00, fail_vmvnr
+    lbu t1, 15(t0)
+    assert_reg_imm t1, 0x0f, fail_vmvnr
+
+    # vmv8r.v v16, v8: copy 8 registers (verify first register only).
+    la a1, whole_src
+    vle8.v v8, (a1)
+    vmv8r.v v16, v8
+    la a1, whole_out
+    vse8.v v16, (a1)
+    la t0, whole_out
+    lbu t1, 0(t0)
+    assert_reg_imm t1, 0x00, fail_vmvnr
+    lbu t1, 15(t0)
+    assert_reg_imm t1, 0x0f, fail_vmvnr
+
     la a1, ok_msg
     li a2, ok_msg_len
     j write_and_exit_ok
@@ -2042,6 +2104,9 @@ fail_vfwredusumf:
     j write_and_exit_fail
 fail_fractional:
     li a3, 0xf0
+    j write_and_exit_fail
+fail_vmvnr:
+    li a3, 0xf1
     j write_and_exit_fail
 
 write_and_exit_fail:

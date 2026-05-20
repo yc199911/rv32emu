@@ -526,6 +526,10 @@ CONSTOPT(vwmaccus_vx, {})
 CONSTOPT(vwmaccsu_vv, {})
 CONSTOPT(vwmaccsu_vx, {})
 CONSTOPT(vmv_s_x, {})
+CONSTOPT(vmv1r_v, {})
+CONSTOPT(vmv2r_v, {})
+CONSTOPT(vmv4r_v, {})
+CONSTOPT(vmv8r_v, {})
 /* vmv.x.s, vcpop.m, and vfirst.m read a vector register and write the
  * scalar result into GPR rd. As above, the constant tracker must drop
  * rd because none of these are constant-foldable from the GPR file.

@@ -3112,6 +3112,51 @@ static inline void rvv_exec_vmv_x_s(riscv_t *rv, const rv_insn_t *ir)
     rv->csr_vstart = 0;
 }
 
+/* Whole vector register move (V 1.0 §16.6).
+ *
+ * Copies NREG whole vector registers (NREG * VLEN bits) from vs2 to vd,
+ * regardless of SEW/LMUL/vl. Spec-defined behavior:
+ *   - vd and vs2 must be aligned to NREG (reserved encoding otherwise).
+ *   - If vd == vs2: architectural NOP (no copy, but clear vstart).
+ *   - If vstart >= evl (where evl = NREG * VLEN / SEW elements):
+ *     no elements are written. Equivalent in bytes: start_byte >= NREG*vlenb.
+ *   - Else copy bytes [start_byte, NREG*vlenb) from vs2 group to vd group;
+ *     earlier bytes (preserved by vstart) are left untouched.
+ *   - Always clear csr_vstart on completion.
+ *
+ * Returns false (with trap raised) on alignment violation; true otherwise.
+ */
+static inline bool rvv_exec_vmv_nr(riscv_t *rv,
+                                   const rv_insn_t *ir,
+                                   uint32_t nreg)
+{
+    if (!rvv_validate_reg_span(ir->vd, nreg) ||
+        !rvv_validate_reg_span(ir->vs2, nreg))
+        return rvv_trap_illegal_state(rv, 0);
+
+    if (ir->vd == ir->vs2) {
+        rv->csr_vstart = 0;
+        return true;
+    }
+
+    uint32_t vlenb = rv->csr_vlenb;
+    uint32_t evl_bytes = nreg * vlenb;
+    uint32_t sew_bytes = rvv_sew_bits(rv->csr_vtype) / 8;
+    uint32_t start_byte = rv->csr_vstart * sew_bytes;
+
+    if (start_byte >= evl_bytes) {
+        rv->csr_vstart = 0;
+        return true;
+    }
+
+    uint8_t *dst = (uint8_t *) rv->V[ir->vd];
+    uint8_t *src = (uint8_t *) rv->V[ir->vs2];
+    memcpy(dst + start_byte, src + start_byte, evl_bytes - start_byte);
+
+    rv->csr_vstart = 0;
+    return true;
+}
+
 static inline void rvv_exec_vrgather_vv(riscv_t *rv,
                                         const rv_insn_t *ir,
                                         uint32_t dest,
@@ -4826,6 +4871,23 @@ RVOP(vmv_v_x, {VECTOR_DISPATCH(ir->vd, 0, ir->rs1, vmv, VX)})
 
 RVOP(vmv_v_i, {VECTOR_DISPATCH(ir->vd, 0, ir->imm, vmv, VI)})
 #undef op_vmv
+
+RVOP(vmv1r_v, {
+    if (!rvv_exec_vmv_nr(rv, ir, 1))
+        return false;
+})
+RVOP(vmv2r_v, {
+    if (!rvv_exec_vmv_nr(rv, ir, 2))
+        return false;
+})
+RVOP(vmv4r_v, {
+    if (!rvv_exec_vmv_nr(rv, ir, 4))
+        return false;
+})
+RVOP(vmv8r_v, {
+    if (!rvv_exec_vmv_nr(rv, ir, 8))
+        return false;
+})
 
 RVOP(vmseq_vv, {
     if (rvv_require_operable(rv))
