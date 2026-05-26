@@ -745,6 +745,8 @@ enum op_field {
         _(vwmaccsu_vx, 0, 4, 0, ENC(rs1, rs2, vd))        \
         _(vmv_s_x, 0, 4, 0, ENC(rs1, rs2, vd))            \
         _(vmv_x_s, 0, 4, 0, ENC(rs1, rs2, vd))            \
+        _(vfmv_f_s, 0, 4, 0, ENC(rs1, rs2, vd))           \
+        _(vfmv_s_f, 0, 4, 0, ENC(rs1, rs2, vd))           \
         _(vmv1r_v, 0, 4, 0, ENC(rs2, vd))                 \
         _(vmv2r_v, 0, 4, 0, ENC(rs2, vd))                 \
         _(vmv4r_v, 0, 4, 0, ENC(rs2, vd))                 \

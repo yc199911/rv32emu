@@ -3112,6 +3112,39 @@ static inline void rvv_exec_vmv_x_s(riscv_t *rv, const rv_insn_t *ir)
     rv->csr_vstart = 0;
 }
 
+/* vfmv.s.f scalar-FP move into vector element 0 (V 1.0 §16.2).
+ *
+ * Mirrors rvv_exec_vmv_s_x but reads the scalar value from the F
+ * register file instead of X. The spec writes only element 0; the
+ * remaining elements follow tail-agnostic/undisturbed policy. If
+ * vstart >= vl or vl == 0, no element is written.
+ */
+static inline void rvv_exec_vfmv_s_f(riscv_t *rv, const rv_insn_t *ir)
+{
+    uint32_t sew_bits = rvv_sew_bits(rv->csr_vtype);
+    uint32_t value = rvv_trunc_elem(rv->F[ir->rs1].v, sew_bits);
+
+    if ((rv->csr_vstart == 0) && (rv->csr_vl > 0))
+        rvv_set_elem(rv, ir->vd, 0, sew_bits, value);
+    rv->csr_vstart = 0;
+}
+
+/* vfmv.f.s extract vector element 0 to scalar FP register (V 1.0 §16.2).
+ *
+ * Mirrors rvv_exec_vmv_x_s but writes the result to the F register file
+ * instead of X. Per spec, vfmv.f.s "performs its operation even if
+ * vstart >= vl or vl == 0", so no vstart/vl guard around the write.
+ * The raw element bits go directly into F[rd] (no sign extension —
+ * FP bit patterns do not extend).
+ */
+static inline void rvv_exec_vfmv_f_s(riscv_t *rv, const rv_insn_t *ir)
+{
+    uint32_t sew_bits = rvv_sew_bits(rv->csr_vtype);
+
+    rv->F[ir->rd].v = rvv_get_elem(rv, ir->vs2, 0, sew_bits);
+    rv->csr_vstart = 0;
+}
+
 /* Whole vector register move (V 1.0 §16.6).
  *
  * Copies NREG whole vector registers (NREG * VLEN bits) from vs2 to vd,
@@ -6497,6 +6530,22 @@ RVOP(vmv_x_s, {
     if (!ir->vm)
         return rvv_trap_illegal_state(rv, 0);
     rvv_exec_vmv_x_s(rv, ir);
+})
+
+RVOP(vfmv_s_f, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!ir->vm)
+        return rvv_trap_illegal_state(rv, 0);
+    rvv_exec_vfmv_s_f(rv, ir);
+})
+
+RVOP(vfmv_f_s, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!ir->vm)
+        return rvv_trap_illegal_state(rv, 0);
+    rvv_exec_vfmv_f_s(rv, ir);
 })
 
 RVOP(vcpop_m, {

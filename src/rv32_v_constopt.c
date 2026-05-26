@@ -535,6 +535,8 @@ CONSTOPT(vmv8r_v, {})
  * rd because none of these are constant-foldable from the GPR file.
  */
 CONSTOPT(vmv_x_s, { info->is_constant[ir->rd] = false; })
+CONSTOPT(vfmv_s_f, {})
+CONSTOPT(vfmv_f_s, {})
 CONSTOPT(vcpop_m, { info->is_constant[ir->rd] = false; })
 CONSTOPT(vfirst_m, { info->is_constant[ir->rd] = false; })
 CONSTOPT(vmsbf_m, {})

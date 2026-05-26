@@ -5600,6 +5600,20 @@ static inline bool op_op_v(rv_insn_t *ir, const uint32_t insn)
             ir->opcode = rv_insn_vfsgnjx_vv;
             return true;
 #endif /* RV32_HAS(EXT_V) */
+        case 0x10:
+            switch ((insn >> 15) & 0x1f) {
+#if RV32_HAS(EXT_V)
+            case 0:
+                ir->rd = decode_rd(insn);
+                ir->vs2 = decode_rs2(insn);
+                ir->vm = (insn >> 25) & 0x1;
+                ir->opcode = rv_insn_vfmv_f_s;
+                return true;
+#endif /* RV32_HAS(EXT_V) */
+            default:
+                break;
+            }
+            break;
 #if RV32_HAS(EXT_V)
         case 0x18:
             ir->vd = decode_rd(insn);
@@ -7137,6 +7151,15 @@ static inline bool op_op_v(rv_insn_t *ir, const uint32_t insn)
             ir->rs1 = decode_rs1(insn);
             ir->vm = (insn >> 25) & 0x1;
             ir->opcode = rv_insn_vfslide1down_vf;
+            return true;
+#endif /* RV32_HAS(EXT_V) */
+#if RV32_HAS(EXT_V)
+        case 0x10:
+            ir->vd = decode_rd(insn);
+            ir->vs2 = decode_rs2(insn);
+            ir->rs1 = decode_rs1(insn);
+            ir->vm = (insn >> 25) & 0x1;
+            ir->opcode = rv_insn_vfmv_s_f;
             return true;
 #endif /* RV32_HAS(EXT_V) */
         case 0x17:

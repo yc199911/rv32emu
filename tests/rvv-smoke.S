@@ -1879,6 +1879,23 @@ _start:
     li a2, ok_msg_len
     j write_and_exit_ok
 
+
+    # ===== vfmv.s.f / vfmv.f.s scalar-FP move (V 1.0 §16.2) =====
+    # Smoke: round-trip a known FP value through V[0] element 0.
+    csrwi vstart, 0
+    vsetvli t0, x0, e32, m1, ta, mu
+
+    li t1, 0x40400000
+    fmv.w.x ft1, t1
+
+    vfmv.s.f v3, ft1
+
+    vfmv.f.s ft2, v3
+
+    fmv.x.w t2, ft2
+    li t3, 0x40400000
+    bne t2, t3, fail_vfmv
+
 /*
  * Per-test failure labels. Each loads a distinct exit code into a3 so a
  * failing run can be bisected via the shell exit status without changing
@@ -2107,6 +2124,9 @@ fail_fractional:
     j write_and_exit_fail
 fail_vmvnr:
     li a3, 0xf1
+    j write_and_exit_fail
+fail_vfmv:
+    li a3, 0xf5
     j write_and_exit_fail
 
 write_and_exit_fail:
