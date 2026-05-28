@@ -1896,6 +1896,44 @@ _start:
     li t3, 0x40400000
     bne t2, t3, fail_vfmv
 
+    # ===== vzext.vf{2,4} / vsext.vf2 integer extension (V 1.0 §11.3) =====
+    # Smoke: load a known sub-SEW pattern (high bit set) and verify zero-
+    # vs sign-extend behavior. Element 0 read-back via vmv.x.s.
+    #
+    # vzext.vf2: src_sew=16, expect upper bits zeroed (0x00008080).
+    # vsext.vf2: src_sew=16, expect upper bits = sign bit (0xFFFF8080).
+    # vzext.vf4: src_sew=8, sub-EMUL case (src EMUL = LMUL/4 = 1/4).
+
+    csrwi vstart, 0
+    vsetvli t0, x0, e16, m1, ta, mu
+    li t1, 0x8080
+    vmv.v.x v2, t1                  # v2 = {0x8080, 0x8080, ...} as 16-bit
+
+    vsetvli t0, x0, e32, m1, ta, mu # now interpret as 32-bit elements
+    vzext.vf2 v3, v2                # v3[0] = 0x00008080
+    vsext.vf2 v4, v2                # v4[0] = 0xFFFF8080
+
+    vmv.x.s t2, v3
+    li t3, 0x00008080
+    bne t2, t3, fail_vzext_vf2
+
+    vmv.x.s t2, v4
+    li t3, 0xFFFF8080
+    bne t2, t3, fail_vsext_vf2
+
+    # vzext.vf4 sub-EMUL: source SEW=8, dest SEW=32.
+    csrwi vstart, 0
+    vsetvli t0, x0, e8, m1, ta, mu
+    li t1, 0x80
+    vmv.v.x v2, t1                  # v2 bytes = {0x80, 0x80, ...}
+
+    vsetvli t0, x0, e32, m1, ta, mu
+    vzext.vf4 v3, v2                # v3[0] = 0x00000080
+
+    vmv.x.s t2, v3
+    li t3, 0x00000080
+    bne t2, t3, fail_vzext_vf4
+
 /*
  * Per-test failure labels. Each loads a distinct exit code into a3 so a
  * failing run can be bisected via the shell exit status without changing
@@ -2127,6 +2165,15 @@ fail_vmvnr:
     j write_and_exit_fail
 fail_vfmv:
     li a3, 0xf5
+    j write_and_exit_fail
+fail_vzext_vf2:
+    li a3, 0xf6
+    j write_and_exit_fail
+fail_vsext_vf2:
+    li a3, 0xf7
+    j write_and_exit_fail
+fail_vzext_vf4:
+    li a3, 0xf8
     j write_and_exit_fail
 
 write_and_exit_fail:

@@ -3145,6 +3145,73 @@ static inline void rvv_exec_vfmv_f_s(riscv_t *rv, const rv_insn_t *ir)
     rv->csr_vstart = 0;
 }
 
+/* vzext.vfN / vsext.vfN integer extension (V 1.0 §11.3).
+ *
+ * Read element of width SEW/ratio from vs2 and widen it to SEW into vd.
+ * Ratio is 2, 4, or 8 (vf2/vf4/vf8); is_signed selects sign-extend (vsext)
+ * vs zero-extend (vzext).
+ *
+ * Spec constraints checked here:
+ *   - SEW must be >= ratio * 8 (else source element width < 8 bits).
+ *   - Source register group EMUL = LMUL/ratio (sub-EMUL); rvv_eew_reg_span
+ *     enforces EMUL <= 8 and implicitly the >= 1/8 lower bound via SEW>=8.
+ *   - Cross-EEW overlap rule (§11.2): vd group (LMUL) and vs2 group
+ *     (LMUL/ratio) may overlap only when their base registers are equal.
+ *
+ * Returns false on illegal-state trap (caller propagates); true on success.
+ */
+static inline bool rvv_exec_ext(riscv_t *rv,
+                                const rv_insn_t *ir,
+                                uint32_t ratio,
+                                bool is_signed)
+{
+    uint32_t dest_sew = rvv_sew_bits(rv->csr_vtype);
+    uint32_t src_sew;
+    uint32_t dest_span, src_span;
+
+    if (dest_sew < ratio * 8U)
+        return rvv_trap_illegal_state(rv, 0);
+    src_sew = dest_sew / ratio;
+
+    /* dest uses standard SEW-based group alignment. */
+    if (rvv_check_data_reg(rv, ir->vd))
+        return false;
+    dest_span = rvv_group_regs(rv->csr_vtype);
+
+    /* source uses sub-EMUL based on src_sew (= SEW/ratio). */
+    if (!rvv_eew_reg_span(rv, src_sew, &src_span))
+        return rvv_trap_illegal_state(rv, 0);
+    if (!rvv_validate_reg_span(ir->vs2, src_span))
+        return rvv_trap_illegal_state(rv, 0);
+
+    /* Cross-EEW overlap (§11.2): legal only when base regs match. */
+    if (rvv_cross_eew_overlap_illegal(ir->vd, dest_span,
+                                      ir->vs2, src_span))
+        return rvv_trap_illegal_state(rv, 0);
+
+    uint32_t vlmax = rvv_vlmax(rv->csr_vtype);
+
+    for (uint32_t elem = rv->csr_vstart; elem < rv->csr_vl; elem++) {
+        if (!rvv_mask_enabled_for_elem(rv, ir, elem))
+            continue;
+        uint32_t src_val = rvv_get_elem(rv, ir->vs2, elem, src_sew);
+        uint64_t dst_val = is_signed
+            ? (uint64_t) (int64_t) rvv_signed_elem(src_val, src_sew)
+            : (uint64_t) src_val;
+        rvv_set_elem_ext(rv, ir->vd, elem, dest_sew, dst_val);
+    }
+
+    /* Tail-agnostic fill. */
+    if ((rv->csr_vtype >> 6) & 0x1) {
+        uint64_t fill = rvv_data_fill_ext(dest_sew);
+        for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
+            rvv_set_elem_ext(rv, ir->vd, elem, dest_sew, fill);
+    }
+
+    rv->csr_vstart = 0;
+    return true;
+}
+
 /* Whole vector register move (V 1.0 §16.6).
  *
  * Copies NREG whole vector registers (NREG * VLEN bits) from vs2 to vd,
@@ -6546,6 +6613,48 @@ RVOP(vfmv_f_s, {
     if (!ir->vm)
         return rvv_trap_illegal_state(rv, 0);
     rvv_exec_vfmv_f_s(rv, ir);
+})
+
+RVOP(vzext_vf8, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 8, false))
+        return false;
+})
+
+RVOP(vsext_vf8, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 8, true))
+        return false;
+})
+
+RVOP(vzext_vf4, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 4, false))
+        return false;
+})
+
+RVOP(vsext_vf4, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 4, true))
+        return false;
+})
+
+RVOP(vzext_vf2, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 2, false))
+        return false;
+})
+
+RVOP(vsext_vf2, {
+    if (rvv_require_operable(rv))
+        return false;
+    if (!rvv_exec_ext(rv, ir, 2, true))
+        return false;
 })
 
 RVOP(vcpop_m, {
