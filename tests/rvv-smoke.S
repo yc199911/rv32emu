@@ -1934,6 +1934,36 @@ _start:
     li t3, 0x00000080
     bne t2, t3, fail_vzext_vf4
 
+    # ===== vfcvt.* single-width FP<->int conversion (V 1.0 §13.17) =====
+    # Verify both directions and the rtz vs dynamic-rounding split.
+    # Element 0 read-back via vmv.x.s (int result) or its raw FP bits.
+    csrwi vstart, 0
+    csrwi frm, 0                    # force RNE so the expected values are fixed
+    vsetvli t0, x0, e32, m1, ta, mu
+
+    # vfcvt.x.f.v (dynamic frm = RNE): 3.5f -> 4
+    li t1, 0x40600000              # 3.5f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0                # v2 = {3.5, ...}
+    vfcvt.x.f.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 4
+    bne t2, t3, fail_vfcvt_x_f
+
+    # vfcvt.rtz.x.f.v: 3.5f -> 3 (truncate toward zero, ignores frm)
+    vfcvt.rtz.x.f.v v4, v2
+    vmv.x.s t2, v4
+    li t3, 3
+    bne t2, t3, fail_vfcvt_rtz_x_f
+
+    # vfcvt.f.x.v: signed int 5 -> 5.0f (0x40A00000)
+    li t1, 5
+    vmv.v.x v2, t1
+    vfcvt.f.x.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 0x40A00000
+    bne t2, t3, fail_vfcvt_f_x
+
 /*
  * Per-test failure labels. Each loads a distinct exit code into a3 so a
  * failing run can be bisected via the shell exit status without changing
@@ -2174,6 +2204,15 @@ fail_vsext_vf2:
     j write_and_exit_fail
 fail_vzext_vf4:
     li a3, 0xf8
+    j write_and_exit_fail
+fail_vfcvt_x_f:
+    li a3, 0xf9
+    j write_and_exit_fail
+fail_vfcvt_rtz_x_f:
+    li a3, 0xfa
+    j write_and_exit_fail
+fail_vfcvt_f_x:
+    li a3, 0xfb
     j write_and_exit_fail
 
 write_and_exit_fail:

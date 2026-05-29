@@ -6721,6 +6721,7 @@ RVOP(vid_v, {
 
 #if RV32_HAS(EXT_F)
 typedef uint32_t (*rvv_fp32_binop_fn)(uint32_t lhs, uint32_t rhs);
+typedef uint32_t (*rvv_fp32_unop_fn)(uint32_t src);
 typedef uint32_t (*rvv_fp32_triop_fn)(uint32_t dest,
                                       uint32_t lhs,
                                       uint32_t rhs);
@@ -6784,6 +6785,36 @@ static inline uint32_t rvv_fp_mul32(uint32_t lhs, uint32_t rhs)
 static inline uint32_t rvv_fp_div32(uint32_t lhs, uint32_t rhs)
 {
     return f32_div(rvv_fp32_from_raw(lhs), rvv_fp32_from_raw(rhs)).v;
+}
+
+/* Per-element FP<->int conversion wrappers for vfcvt.* (V 1.0 §13.17).
+ *
+ * Each reads/writes raw 32-bit element bits. The rounding mode and the
+ * exception-flag accumulation are handled by the caller (it sets
+ * softfloat_roundingMode and reads softfloat_exceptionFlags), so these
+ * just bridge raw bits to the softfloat scalar conversion primitives.
+ * Passing exact=true makes softfloat raise the inexact (NX) flag when
+ * rounding loses precision, as the spec requires.
+ */
+static inline uint32_t rvv_fp_cvt_f_to_xu32(uint32_t bits)
+{
+    return f32_to_ui32(rvv_fp32_from_raw(bits), softfloat_roundingMode, true);
+}
+
+static inline uint32_t rvv_fp_cvt_f_to_x32(uint32_t bits)
+{
+    return (uint32_t) f32_to_i32(rvv_fp32_from_raw(bits), softfloat_roundingMode,
+                                 true);
+}
+
+static inline uint32_t rvv_fp_cvt_xu_to_f32(uint32_t bits)
+{
+    return ui32_to_f32(bits).v;
+}
+
+static inline uint32_t rvv_fp_cvt_x_to_f32(uint32_t bits)
+{
+    return i32_to_f32((int32_t) bits).v;
 }
 
 static inline uint32_t rvv_fp_min32(uint32_t lhs, uint32_t rhs)
@@ -7014,6 +7045,37 @@ static inline void rvv_exec_fp32_vv(riscv_t *rv,
         rvv_set_elem(rv, dest, elem, 32,
                      op(rvv_get_elem(rv, ir->vs2, elem, 32),
                         rvv_get_elem(rv, ir->vs1, elem, 32)));
+    }
+    if (vta) {
+        for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
+            rvv_set_elem(rv, dest, elem, 32, 0xFFFFFFFFU);
+    }
+    rv->csr_vstart = 0;
+}
+
+/* Single-width FP32 unary iteration for vfcvt.* (V 1.0 §13.17).
+ *
+ * Identical mask/tail/vstart handling to rvv_exec_fp32_vv, but the
+ * element op is unary (reads only vs2). Source and destination element
+ * width are both SEW=32, so no register-group widening is involved.
+ */
+static inline void rvv_exec_fp32_unary(riscv_t *rv,
+                                       const rv_insn_t *ir,
+                                       uint32_t dest,
+                                       rvv_fp32_unop_fn op)
+{
+    uint32_t vlmax = rvv_vlmax(rv->csr_vtype);
+    uint8_t vma = (rv->csr_vtype >> 7) & 0x1;
+    uint8_t vta = (rv->csr_vtype >> 6) & 0x1;
+
+    for (uint32_t elem = rv->csr_vstart; elem < rv->csr_vl; elem++) {
+        if (!rvv_mask_enabled_for_elem(rv, ir, elem)) {
+            if (vma)
+                rvv_set_elem(rv, dest, elem, 32, 0xFFFFFFFFU);
+            continue;
+        }
+        rvv_set_elem(rv, dest, elem, 32,
+                     op(rvv_get_elem(rv, ir->vs2, elem, 32)));
     }
     if (vta) {
         for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
@@ -7459,6 +7521,25 @@ static inline void rvv_exec_vfmv_v_f(riscv_t *rv,
         set_fflag(rv);                                        \
     })
 
+/* Single-width FP<->int conversion (vfcvt.*, V 1.0 §13.17).
+ * Unary: reads vs2, writes vd, both SEW=32. `rm` selects the
+ * softfloat rounding mode: 0x7 = dynamic (use frm CSR) for the
+ * plain variants, 0x1 = round-to-zero for the explicit rtz forms.
+ */
+#define RVV_FP32_CVT_OP(name, opfn, rm)                      \
+    RVOP(name, {                                             \
+        if (rvv_require_operable(rv))                        \
+            return false;                                    \
+        if ((rvv_sew_bits(rv->csr_vtype) != 32) ||           \
+            !rvv_validate_data_reg(rv->csr_vtype, ir->vd) || \
+            !rvv_validate_data_reg(rv->csr_vtype, ir->vs2))  \
+            return rvv_trap_illegal_state(rv, 0);            \
+        softfloat_exceptionFlags = 0;                        \
+        set_rounding_mode(rv, rm);                           \
+        rvv_exec_fp32_unary(rv, ir, ir->vd, opfn);           \
+        set_fflag(rv);                                       \
+    })
+
 #define RVV_FP32_VF_OP(name, opfn, needs_round)              \
     RVOP(name, {                                             \
         if (rvv_require_operable(rv))                        \
@@ -7771,6 +7852,18 @@ RVOP(vfrdiv_vf, {
 
 RVV_FP32_VV_OP(vfmul_vv, rvv_fp_mul32, true);
 RVV_FP32_VF_OP(vfmul_vf, rvv_fp_mul32, true);
+
+/* Single-width FP<->int conversions (vfcvt.*, V 1.0 §13.17).
+ * The rtz forms hardcode round-to-zero (rm=0x1); the others use the
+ * dynamic frm CSR (rm=0x7). f->int wrappers saturate + set NV on
+ * NaN/Inf/overflow inside softfloat; int->f may round (mantissa<int).
+ */
+RVV_FP32_CVT_OP(vfcvt_xu_f_v, rvv_fp_cvt_f_to_xu32, 0x7);
+RVV_FP32_CVT_OP(vfcvt_x_f_v, rvv_fp_cvt_f_to_x32, 0x7);
+RVV_FP32_CVT_OP(vfcvt_f_xu_v, rvv_fp_cvt_xu_to_f32, 0x7);
+RVV_FP32_CVT_OP(vfcvt_f_x_v, rvv_fp_cvt_x_to_f32, 0x7);
+RVV_FP32_CVT_OP(vfcvt_rtz_xu_f_v, rvv_fp_cvt_f_to_xu32, 0x1);
+RVV_FP32_CVT_OP(vfcvt_rtz_x_f_v, rvv_fp_cvt_f_to_x32, 0x1);
 
 RVOP(vfrsub_vf, {
     uint32_t vlmax = rvv_vlmax(rv->csr_vtype);

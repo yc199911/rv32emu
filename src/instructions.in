@@ -911,6 +911,13 @@ vsoxseg8ei64_v                vs3 rs1 vs2 vm veew  14..12=7  27..26=3  28=0  31.
   vfslide1up_vf                         vd vs2 rs1 vm  31..26=14  14..12=5  6..2=0x15 1..0=3
 # -- funct6=001111 (0x0f) --
   vfslide1down_vf                       vd vs2 rs1 vm  31..26=15  14..12=5  6..2=0x15 1..0=3
+# -- funct6=010010 (0x12) VFUNARY0 --
+  vfcvt_xu_f_v                          vd vs2 vm  19..15=0  31..26=18  14..12=1  6..2=0x15 1..0=3
+  vfcvt_x_f_v                           vd vs2 vm  19..15=1  31..26=18  14..12=1  6..2=0x15 1..0=3
+  vfcvt_f_xu_v                          vd vs2 vm  19..15=2  31..26=18  14..12=1  6..2=0x15 1..0=3
+  vfcvt_f_x_v                           vd vs2 vm  19..15=3  31..26=18  14..12=1  6..2=0x15 1..0=3
+  vfcvt_rtz_xu_f_v                      vd vs2 vm  19..15=6  31..26=18  14..12=1  6..2=0x15 1..0=3
+  vfcvt_rtz_x_f_v                       vd vs2 vm  19..15=7  31..26=18  14..12=1  6..2=0x15 1..0=3
 # -- funct6=010111 (0x17) --
   vfmerge_vfm                           vd vs2 rs1 vm  25=0  31..26=23  14..12=5  6..2=0x15 1..0=3
   vfmv_v_f                              vd vs2 rs1 vm  25=1  31..26=23  14..12=5  6..2=0x15 1..0=3

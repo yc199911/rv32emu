@@ -785,6 +785,12 @@ enum op_field {
         _(vfsgnjx_vf, 0, 4, 0, ENC(rs1, rs2, vd))         \
         _(vfslide1up_vf, 0, 4, 0, ENC(rs1, rs2, vd))      \
         _(vfslide1down_vf, 0, 4, 0, ENC(rs1, rs2, vd))    \
+        _(vfcvt_xu_f_v, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfcvt_x_f_v, 0, 4, 0, ENC(rs1, rs2, vd))        \
+        _(vfcvt_f_xu_v, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfcvt_f_x_v, 0, 4, 0, ENC(rs1, rs2, vd))        \
+        _(vfcvt_rtz_xu_f_v, 0, 4, 0, ENC(rs1, rs2, vd))   \
+        _(vfcvt_rtz_x_f_v, 0, 4, 0, ENC(rs1, rs2, vd))    \
         _(vfmerge_vfm, 0, 4, 0, ENC(rs1, rs2, vd))        \
         _(vfmv_v_f, 0, 4, 0, ENC(rs1, rs2, vd))           \
         _(vmfeq_vv, 0, 4, 0, ENC(rs1, rs2, vd))           \
