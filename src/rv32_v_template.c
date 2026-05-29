@@ -6822,6 +6822,184 @@ static inline uint32_t rvv_fp_cvt_x_to_f32(uint32_t bits)
     return i32_to_f32((int32_t) bits).v;
 }
 
+/* VFUNARY1 single-width unary FP ops (V 1.0 §13.8/§13.14).
+ * vfsqrt.v computes the IEEE square root (may round, sets NV on negative
+ * operands). vfclass.v writes the 10-bit classification mask (calc_fclass
+ * from softfp.h, the same one scalar fclass uses) and raises no exceptions. */
+static inline uint32_t rvv_fp_sqrt32(uint32_t bits)
+{
+    return f32_sqrt(rvv_fp32_from_raw(bits)).v;
+}
+
+static inline uint32_t rvv_fp_class32(uint32_t bits)
+{
+    return calc_fclass(bits);
+}
+
+/* vfrsqrt7.v / vfrec7.v 7-bit estimates (V 1.0 §13.8/§13.9). softfloat has no
+ * primitive for these, so the cores below are a verbatim port of the RISC-V
+ * softfloat reference (fall_reciprocal.c): a 128-entry lookup keyed by the
+ * exponent LSB + top significand bits, plus exponent fix-up. The intermediate
+ * math MUST stay 64-bit: the exponent arithmetic relies on unsigned wraparound
+ * (~exp) and on comparing the result against UINT64_MAX, both of which only
+ * work at 64 bits even for f32. rv32emu only instantiates the f32 form
+ * (e=8, s=23). */
+static inline uint64_t rvv_fp_extract64(uint64_t val, int pos, int len)
+{
+    return (val >> pos) & (~UINT64_C(0) >> (64 - len));
+}
+
+static inline uint64_t rvv_fp_make_mask64(int pos, int len)
+{
+    return (UINT64_MAX >> (64 - len)) << pos;
+}
+
+static inline uint64_t rvv_fp_rsqrte7_core(uint64_t val, int e, int s, bool sub)
+{
+    uint64_t exp = rvv_fp_extract64(val, s, e);
+    uint64_t sig = rvv_fp_extract64(val, 0, s);
+    uint64_t sign = rvv_fp_extract64(val, s + e, 1);
+    const int p = 7;
+    static const uint8_t table[] = {
+        52,  51,  50,  48,  47,  46,  44,  43,  42,  41,  40,  39,  38,
+        36,  35,  34,  33,  32,  31,  30,  30,  29,  28,  27,  26,  25,
+        24,  23,  23,  22,  21,  20,  19,  19,  18,  17,  16,  16,  15,
+        14,  14,  13,  12,  12,  11,  10,  10,  9,   9,   8,   7,   7,
+        6,   6,   5,   4,   4,   3,   3,   2,   2,   1,   1,   0,   127,
+        125, 123, 121, 119, 118, 116, 114, 113, 111, 109, 108, 106, 105,
+        103, 102, 100, 99,  97,  96,  95,  93,  92,  91,  90,  88,  87,
+        86,  85,  84,  83,  82,  80,  79,  78,  77,  76,  75,  74,  73,
+        72,  71,  70,  70,  69,  68,  67,  66,  65,  64,  63,  63,  62,
+        61,  60,  59,  59,  58,  57,  56,  56,  55,  54,  53};
+
+    if (sub) {
+        while (rvv_fp_extract64(sig, s - 1, 1) == 0)
+            exp--, sig <<= 1;
+        sig = (sig << 1) & rvv_fp_make_mask64(0, s);
+    }
+
+    int idx = ((exp & 1) << (p - 1)) | (sig >> (s - p + 1));
+    uint64_t out_sig = (uint64_t) (table[idx]) << (s - p);
+    uint64_t out_exp = (3 * rvv_fp_make_mask64(0, e - 1) + ~exp) / 2;
+
+    return (sign << (s + e)) | (out_exp << s) | out_sig;
+}
+
+static inline uint64_t rvv_fp_recip7_core(uint64_t val,
+                                          int e,
+                                          int s,
+                                          int rm,
+                                          bool sub,
+                                          bool *round_abnormal)
+{
+    uint64_t exp = rvv_fp_extract64(val, s, e);
+    uint64_t sig = rvv_fp_extract64(val, 0, s);
+    uint64_t sign = rvv_fp_extract64(val, s + e, 1);
+    const int p = 7;
+    static const uint8_t table[] = {
+        127, 125, 123, 121, 119, 117, 116, 114, 112, 110, 109, 107, 105,
+        104, 102, 100, 99,  97,  96,  94,  93,  91,  90,  88,  87,  85,
+        84,  83,  81,  80,  79,  77,  76,  75,  74,  72,  71,  70,  69,
+        68,  66,  65,  64,  63,  62,  61,  60,  59,  58,  57,  56,  55,
+        54,  53,  52,  51,  50,  49,  48,  47,  46,  45,  44,  43,  42,
+        41,  40,  40,  39,  38,  37,  36,  35,  35,  34,  33,  32,  31,
+        31,  30,  29,  28,  28,  27,  26,  25,  25,  24,  23,  23,  22,
+        21,  21,  20,  19,  19,  18,  17,  17,  16,  15,  15,  14,  14,
+        13,  12,  12,  11,  11,  10,  9,   9,   8,   8,   7,   7,   6,
+        5,   5,   4,   4,   3,   3,   2,   2,   1,   1,   0};
+
+    if (sub) {
+        while (rvv_fp_extract64(sig, s - 1, 1) == 0)
+            exp--, sig <<= 1;
+        sig = (sig << 1) & rvv_fp_make_mask64(0, s);
+
+        if (exp != 0 && exp != UINT64_MAX) {
+            *round_abnormal = true;
+            if (rm == 1 || (rm == 2 && !sign) || (rm == 3 && sign))
+                return ((sign << (s + e)) | rvv_fp_make_mask64(s, e)) - 1;
+            else
+                return (sign << (s + e)) | rvv_fp_make_mask64(s, e);
+        }
+    }
+
+    int idx = sig >> (s - p);
+    uint64_t out_sig = (uint64_t) (table[idx]) << (s - p);
+    uint64_t out_exp = 2 * rvv_fp_make_mask64(0, e - 1) + ~exp;
+    if (out_exp == 0 || out_exp == UINT64_MAX) {
+        out_sig = (out_sig >> 1) | rvv_fp_make_mask64(s - 1, 1);
+        if (out_exp == UINT64_MAX) {
+            out_sig >>= 1;
+            out_exp = 0;
+        }
+    }
+
+    return (sign << (s + e)) | (out_exp << s) | out_sig;
+}
+
+static inline uint32_t rvv_fp_rsqrt7_32(uint32_t bits)
+{
+    bool sub = false;
+    switch (calc_fclass(bits)) {
+    case 0x001: /* -inf */
+    case 0x002: /* -normal */
+    case 0x004: /* -subnormal */
+    case 0x100: /* sNaN */
+        softfloat_exceptionFlags |= softfloat_flag_invalid;
+        return RV_NAN;
+    case 0x200: /* qNaN */
+        return RV_NAN;
+    case 0x008: /* -0 -> -inf, raise DZ */
+        softfloat_exceptionFlags |= softfloat_flag_infinite;
+        return 0xff800000U;
+    case 0x010: /* +0 -> +inf, raise DZ */
+        softfloat_exceptionFlags |= softfloat_flag_infinite;
+        return 0x7f800000U;
+    case 0x080: /* +inf -> +0 */
+        return 0x0U;
+    case 0x020: /* +subnormal */
+        sub = true;
+        break;
+    default: /* +normal */
+        break;
+    }
+    return (uint32_t) rvv_fp_rsqrte7_core(bits, 8, 23, sub);
+}
+
+static inline uint32_t rvv_fp_recip7_32(uint32_t bits)
+{
+    bool sub = false, round_abnormal = false;
+    uint32_t out;
+    switch (calc_fclass(bits)) {
+    case 0x001: /* -inf -> -0 */
+        return 0x80000000U;
+    case 0x080: /* +inf -> +0 */
+        return 0x0U;
+    case 0x008: /* -0 -> -inf, raise DZ */
+        softfloat_exceptionFlags |= softfloat_flag_infinite;
+        return 0xff800000U;
+    case 0x010: /* +0 -> +inf, raise DZ */
+        softfloat_exceptionFlags |= softfloat_flag_infinite;
+        return 0x7f800000U;
+    case 0x100: /* sNaN */
+        softfloat_exceptionFlags |= softfloat_flag_invalid;
+        return RV_NAN;
+    case 0x200: /* qNaN */
+        return RV_NAN;
+    case 0x004: /* -subnormal */
+    case 0x020: /* +subnormal */
+        sub = true;
+        break;
+    default: /* +/- normal */
+        break;
+    }
+    out = (uint32_t) rvv_fp_recip7_core(bits, 8, 23, softfloat_roundingMode,
+                                        sub, &round_abnormal);
+    if (round_abnormal)
+        softfloat_exceptionFlags |=
+            softfloat_flag_inexact | softfloat_flag_overflow;
+    return out;
+}
+
 /* Widening conversions (vfwcvt.*, V 1.0 §13.18): SEW=32 source element,
  * 2*SEW=64 destination. f->int widening can still overflow int64 (saturates
  * + sets NV). int->double and float->double widening are always exact, so
@@ -8070,6 +8248,30 @@ RVOP(vfncvt_rod_f_f_w, {
     softfloat_roundingMode = softfloat_round_odd;
     rvv_exec_fp_ncvt(rv, ir, ir->vd, rvv_fp_ncvt_f_to_f32);
     set_fflag(rv);
+})
+
+/* VFUNARY1 unary FP (V 1.0 §13.8/§13.14). vfsqrt.v is a single-width unary
+ * op with dynamic rounding + FP flags, so it reuses the CVT macro shape
+ * (validate SEW=32 vd/vs2, set_rounding_mode dynamic, exec unary, set_fflag).
+ */
+RVV_FP32_CVT_OP(vfsqrt_v, rvv_fp_sqrt32, 0x7);
+
+/* vfrsqrt7.v / vfrec7.v reuse the unary CVT shape: clear flags, set the
+ * dynamic rounding mode (vfrec7's subnormal-overflow path consults it), run
+ * the per-element estimate, then fold the raised flags back into fcsr. */
+RVV_FP32_CVT_OP(vfrsqrt7_v, rvv_fp_rsqrt7_32, 0x7);
+RVV_FP32_CVT_OP(vfrec7_v, rvv_fp_recip7_32, 0x7);
+
+/* vfclass.v writes an integer classification mask and raises no FP exceptions,
+ * so it neither sets a rounding mode nor touches fcsr flags. */
+RVOP(vfclass_v, {
+    if (rvv_require_operable(rv))
+        return false;
+    if ((rvv_sew_bits(rv->csr_vtype) != 32) ||
+        !rvv_validate_data_reg(rv->csr_vtype, ir->vd) ||
+        !rvv_validate_data_reg(rv->csr_vtype, ir->vs2))
+        return rvv_trap_illegal_state(rv, 0);
+    rvv_exec_fp32_unary(rv, ir, ir->vd, rvv_fp_class32);
 })
 
 RVOP(vfrsub_vf, {

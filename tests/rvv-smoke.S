@@ -2007,6 +2007,48 @@ _start:
     li t3, 4
     bne t2, t3, fail_vfncvt_x_f
 
+    # ===== vfsqrt.v / vfclass.v VFUNARY1 unary FP (§13.8/§13.14) =====
+    csrwi vstart, 0
+    csrwi frm, 0
+    vsetvli t0, x0, e32, m1, ta, mu
+
+    # vfsqrt.v: sqrt(4.0) = 2.0 (0x40000000)
+    li t1, 0x40800000              # 4.0f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0
+    vfsqrt.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 0x40000000
+    bne t2, t3, fail_vfsqrt
+
+    # vfclass.v: classify +1.0 -> positive normal = 0x040
+    li t1, 0x3f800000              # 1.0f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0
+    vfclass.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 0x040
+    bne t2, t3, fail_vfclass
+
+    # vfrsqrt7.v: 7-bit estimate of 1/sqrt(1.0). Expected bit pattern computed
+    # from the RISC-V softfloat reference: 0x3f7f0000 (~0.996, within 7-bit ULP).
+    li t1, 0x3f800000              # 1.0f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0
+    vfrsqrt7.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 0x3f7f0000
+    bne t2, t3, fail_vfrsqrt7
+
+    # vfrec7.v: 7-bit estimate of 1/2.0. Reference output: 0x3eff0000 (~0.498).
+    li t1, 0x40000000              # 2.0f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0
+    vfrec7.v v3, v2
+    vmv.x.s t2, v3
+    li t3, 0x3eff0000
+    bne t2, t3, fail_vfrec7
+
 /*
  * Per-test failure labels. Each loads a distinct exit code into a3 so a
  * failing run can be bisected via the shell exit status without changing
@@ -2235,6 +2277,18 @@ fail_fractional:
     j write_and_exit_fail
 fail_vmvnr:
     li a3, 0xf1
+    j write_and_exit_fail
+fail_vfsqrt:
+    li a3, 0xf2
+    j write_and_exit_fail
+fail_vfclass:
+    li a3, 0xf3
+    j write_and_exit_fail
+fail_vfrsqrt7:
+    li a3, 0xf4
+    j write_and_exit_fail
+fail_vfrec7:
+    li a3, 0xc4
     j write_and_exit_fail
 fail_vfmv:
     li a3, 0xf5

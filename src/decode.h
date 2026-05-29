@@ -806,6 +806,10 @@ enum op_field {
         _(vfncvt_rod_f_f_w, 0, 4, 0, ENC(rs1, rs2, vd))   \
         _(vfncvt_rtz_xu_f_w, 0, 4, 0, ENC(rs1, rs2, vd))  \
         _(vfncvt_rtz_x_f_w, 0, 4, 0, ENC(rs1, rs2, vd))   \
+        _(vfsqrt_v, 0, 4, 0, ENC(rs1, rs2, vd))           \
+        _(vfrsqrt7_v, 0, 4, 0, ENC(rs1, rs2, vd))         \
+        _(vfrec7_v, 0, 4, 0, ENC(rs1, rs2, vd))           \
+        _(vfclass_v, 0, 4, 0, ENC(rs1, rs2, vd))          \
         _(vfmerge_vfm, 0, 4, 0, ENC(rs1, rs2, vd))        \
         _(vfmv_v_f, 0, 4, 0, ENC(rs1, rs2, vd))           \
         _(vmfeq_vv, 0, 4, 0, ENC(rs1, rs2, vd))           \
