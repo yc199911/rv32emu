@@ -1964,6 +1964,49 @@ _start:
     li t3, 0x40A00000
     bne t2, t3, fail_vfcvt_f_x
 
+    # ===== vfwcvt.* / vfncvt.* widening & narrowing FP conv (§13.18/§13.19) =====
+    # SEW=32: source is FP32/int32, the wide side is FP64/int64 (64-bit elems).
+    # Wide results are read back through memory (vse64 + two lw); narrow
+    # results via vmv.x.s. Dest v4 spans v4-v5 (wide EMUL=2*LMUL).
+    csrwi vstart, 0
+    csrwi frm, 0
+    vsetvli t0, x0, e32, m1, ta, mu
+
+    # vfwcvt.f.x.v: signed int 5 -> FP64 5.0 (0x4014000000000000)
+    li t1, 5
+    vmv.v.x v2, t1
+    vfwcvt.f.x.v v4, v2
+    la a1, fp64_out
+    vse64.v v4, (a1)
+    lw t1, 0(a1)
+    assert_reg_imm t1, 0x00000000, fail_vfwcvt_f_x
+    lw t1, 4(a1)
+    assert_reg_imm t1, 0x40140000, fail_vfwcvt_f_x
+
+    # vfwcvt.f.f.v: FP32 3.5 -> FP64 3.5 (0x400C000000000000)
+    li t1, 0x40600000              # 3.5f
+    fmv.w.x f0, t1
+    vfmv.v.f v2, f0
+    vfwcvt.f.f.v v4, v2            # v4 = {FP64 3.5, ...}
+    la a1, fp64_out
+    vse64.v v4, (a1)
+    lw t1, 0(a1)
+    assert_reg_imm t1, 0x00000000, fail_vfwcvt_f_f
+    lw t1, 4(a1)
+    assert_reg_imm t1, 0x400C0000, fail_vfwcvt_f_f
+
+    # vfncvt.f.f.w: narrow FP64 3.5 back to FP32 3.5 (0x40600000)
+    vfncvt.f.f.w v6, v4
+    vmv.x.s t2, v6
+    li t3, 0x40600000
+    bne t2, t3, fail_vfncvt_f_f
+
+    # vfncvt.x.f.w: FP64 3.5 -> int32 4 (RNE)
+    vfncvt.x.f.w v6, v4
+    vmv.x.s t2, v6
+    li t3, 4
+    bne t2, t3, fail_vfncvt_x_f
+
 /*
  * Per-test failure labels. Each loads a distinct exit code into a3 so a
  * failing run can be bisected via the shell exit status without changing
@@ -2213,6 +2256,18 @@ fail_vfcvt_rtz_x_f:
     j write_and_exit_fail
 fail_vfcvt_f_x:
     li a3, 0xfb
+    j write_and_exit_fail
+fail_vfwcvt_f_x:
+    li a3, 0xfc
+    j write_and_exit_fail
+fail_vfwcvt_f_f:
+    li a3, 0xfd
+    j write_and_exit_fail
+fail_vfncvt_f_f:
+    li a3, 0xfe
+    j write_and_exit_fail
+fail_vfncvt_x_f:
+    li a3, 0xff
     j write_and_exit_fail
 
 write_and_exit_fail:

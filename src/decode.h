@@ -791,6 +791,21 @@ enum op_field {
         _(vfcvt_f_x_v, 0, 4, 0, ENC(rs1, rs2, vd))        \
         _(vfcvt_rtz_xu_f_v, 0, 4, 0, ENC(rs1, rs2, vd))   \
         _(vfcvt_rtz_x_f_v, 0, 4, 0, ENC(rs1, rs2, vd))    \
+        _(vfwcvt_xu_f_v, 0, 4, 0, ENC(rs1, rs2, vd))      \
+        _(vfwcvt_x_f_v, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfwcvt_f_xu_v, 0, 4, 0, ENC(rs1, rs2, vd))      \
+        _(vfwcvt_f_x_v, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfwcvt_f_f_v, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfwcvt_rtz_xu_f_v, 0, 4, 0, ENC(rs1, rs2, vd))  \
+        _(vfwcvt_rtz_x_f_v, 0, 4, 0, ENC(rs1, rs2, vd))   \
+        _(vfncvt_xu_f_w, 0, 4, 0, ENC(rs1, rs2, vd))      \
+        _(vfncvt_x_f_w, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfncvt_f_xu_w, 0, 4, 0, ENC(rs1, rs2, vd))      \
+        _(vfncvt_f_x_w, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfncvt_f_f_w, 0, 4, 0, ENC(rs1, rs2, vd))       \
+        _(vfncvt_rod_f_f_w, 0, 4, 0, ENC(rs1, rs2, vd))   \
+        _(vfncvt_rtz_xu_f_w, 0, 4, 0, ENC(rs1, rs2, vd))  \
+        _(vfncvt_rtz_x_f_w, 0, 4, 0, ENC(rs1, rs2, vd))   \
         _(vfmerge_vfm, 0, 4, 0, ENC(rs1, rs2, vd))        \
         _(vfmv_v_f, 0, 4, 0, ENC(rs1, rs2, vd))           \
         _(vmfeq_vv, 0, 4, 0, ENC(rs1, rs2, vd))           \

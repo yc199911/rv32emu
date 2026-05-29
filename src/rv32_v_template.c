@@ -6731,6 +6731,11 @@ typedef uint64_t (*rvv_fp64_mixed_binop_fn)(uint64_t lhs, uint32_t rhs);
 typedef uint64_t (*rvv_fp64_triop_fn)(uint64_t dest,
                                       uint32_t lhs,
                                       uint32_t rhs);
+/* Conversion op signatures: widening reads a 32-bit element and produces a
+ * 64-bit result (vfwcvt.*); narrowing reads a 64-bit element and produces a
+ * 32-bit result (vfncvt.*). See V 1.0 §13.18/§13.19. */
+typedef uint64_t (*rvv_fp_wcvt_fn)(uint32_t src);
+typedef uint32_t (*rvv_fp_ncvt_fn)(uint64_t src);
 
 static inline riscv_float_t rvv_fp32_from_raw(uint32_t bits)
 {
@@ -6815,6 +6820,67 @@ static inline uint32_t rvv_fp_cvt_xu_to_f32(uint32_t bits)
 static inline uint32_t rvv_fp_cvt_x_to_f32(uint32_t bits)
 {
     return i32_to_f32((int32_t) bits).v;
+}
+
+/* Widening conversions (vfwcvt.*, V 1.0 §13.18): SEW=32 source element,
+ * 2*SEW=64 destination. f->int widening can still overflow int64 (saturates
+ * + sets NV). int->double and float->double widening are always exact, so
+ * they raise no flags. f->int wrappers pass exact=true so NX is set on any
+ * fractional truncation. */
+static inline uint64_t rvv_fp_wcvt_f_to_xu64(uint32_t bits)
+{
+    return f32_to_ui64(rvv_fp32_from_raw(bits), softfloat_roundingMode, true);
+}
+
+static inline uint64_t rvv_fp_wcvt_f_to_x64(uint32_t bits)
+{
+    return (uint64_t) f32_to_i64(rvv_fp32_from_raw(bits), softfloat_roundingMode,
+                                 true);
+}
+
+static inline uint64_t rvv_fp_wcvt_xu_to_f64(uint32_t bits)
+{
+    return ui32_to_f64(bits).v;
+}
+
+static inline uint64_t rvv_fp_wcvt_x_to_f64(uint32_t bits)
+{
+    return i32_to_f64((int32_t) bits).v;
+}
+
+static inline uint64_t rvv_fp_wcvt_f_to_f64(uint32_t bits)
+{
+    return f32_to_f64(rvv_fp32_from_raw(bits)).v;
+}
+
+/* Narrowing conversions (vfncvt.*, V 1.0 §13.19): 2*SEW=64 source element,
+ * SEW=32 destination. Every narrowing variant can lose precision and so may
+ * round (using the active softfloat rounding mode) and set NX/overflow. The
+ * f->int wrappers also saturate + set NV on NaN/Inf/overflow. */
+static inline uint32_t rvv_fp_ncvt_f_to_xu32(uint64_t bits)
+{
+    return f64_to_ui32(rvv_fp64_from_raw(bits), softfloat_roundingMode, true);
+}
+
+static inline uint32_t rvv_fp_ncvt_f_to_x32(uint64_t bits)
+{
+    return (uint32_t) f64_to_i32(rvv_fp64_from_raw(bits), softfloat_roundingMode,
+                                 true);
+}
+
+static inline uint32_t rvv_fp_ncvt_xu_to_f32(uint64_t bits)
+{
+    return ui64_to_f32(bits).v;
+}
+
+static inline uint32_t rvv_fp_ncvt_x_to_f32(uint64_t bits)
+{
+    return i64_to_f32((int64_t) bits).v;
+}
+
+static inline uint32_t rvv_fp_ncvt_f_to_f32(uint64_t bits)
+{
+    return f64_to_f32(rvv_fp64_from_raw(bits)).v;
 }
 
 static inline uint32_t rvv_fp_min32(uint32_t lhs, uint32_t rhs)
@@ -7076,6 +7142,61 @@ static inline void rvv_exec_fp32_unary(riscv_t *rv,
         }
         rvv_set_elem(rv, dest, elem, 32,
                      op(rvv_get_elem(rv, ir->vs2, elem, 32)));
+    }
+    if (vta) {
+        for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
+            rvv_set_elem(rv, dest, elem, 32, 0xFFFFFFFFU);
+    }
+    rv->csr_vstart = 0;
+}
+
+/* Widening unary iteration for vfwcvt.* (V 1.0 §13.18): reads vs2 at SEW=32,
+ * writes the destination at 2*SEW=64. Mask/tail-agnostic elements are filled
+ * with all-ones (matches the widening binary FP helpers). */
+static inline void rvv_exec_fp_wcvt(riscv_t *rv,
+                                    const rv_insn_t *ir,
+                                    uint32_t dest,
+                                    rvv_fp_wcvt_fn op)
+{
+    uint32_t vlmax = rvv_vlmax(rv->csr_vtype);
+    uint8_t vma = (rv->csr_vtype >> 7) & 0x1;
+    uint8_t vta = (rv->csr_vtype >> 6) & 0x1;
+
+    for (uint32_t elem = rv->csr_vstart; elem < rv->csr_vl; elem++) {
+        if (!rvv_mask_enabled_for_elem(rv, ir, elem)) {
+            if (vma)
+                rvv_set_elem_ext(rv, dest, elem, 64, UINT64_MAX);
+            continue;
+        }
+        rvv_set_elem_ext(rv, dest, elem, 64,
+                         op(rvv_get_elem(rv, ir->vs2, elem, 32)));
+    }
+    if (vta) {
+        for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
+            rvv_set_elem_ext(rv, dest, elem, 64, UINT64_MAX);
+    }
+    rv->csr_vstart = 0;
+}
+
+/* Narrowing unary iteration for vfncvt.* (V 1.0 §13.19): reads vs2 at the wide
+ * 2*SEW=64 width, writes the destination at SEW=32. */
+static inline void rvv_exec_fp_ncvt(riscv_t *rv,
+                                    const rv_insn_t *ir,
+                                    uint32_t dest,
+                                    rvv_fp_ncvt_fn op)
+{
+    uint32_t vlmax = rvv_vlmax(rv->csr_vtype);
+    uint8_t vma = (rv->csr_vtype >> 7) & 0x1;
+    uint8_t vta = (rv->csr_vtype >> 6) & 0x1;
+
+    for (uint32_t elem = rv->csr_vstart; elem < rv->csr_vl; elem++) {
+        if (!rvv_mask_enabled_for_elem(rv, ir, elem)) {
+            if (vma)
+                rvv_set_elem(rv, dest, elem, 32, 0xFFFFFFFFU);
+            continue;
+        }
+        rvv_set_elem(rv, dest, elem, 32,
+                     op(rvv_get_elem_ext(rv, ir->vs2, elem, 64)));
     }
     if (vta) {
         for (uint32_t elem = rv->csr_vl; elem < vlmax; elem++)
@@ -7540,6 +7661,51 @@ static inline void rvv_exec_vfmv_v_f(riscv_t *rv,
         set_fflag(rv);                                       \
     })
 
+/* Widening FP<->int conversion (vfwcvt.*, V 1.0 §13.18): unary, reads vs2 at
+ * SEW=32, writes vd at the wide EEW=2*SEW=64. Same EEW validation + cross-EEW
+ * overlap rule as the widening binary FP ops, minus the vs1 operand. `rm` is
+ * a RISC-V rounding-mode code (0x7 dynamic / 0x1 rtz). */
+#define RVV_FP_WCVT_OP(name, opfn, rm)                                \
+    RVOP(name, {                                                      \
+        uint32_t wide_span;                                           \
+        uint32_t narrow_span = rvv_group_regs(rv->csr_vtype);         \
+        if (rvv_require_operable(rv))                                 \
+            return false;                                             \
+        if ((rvv_sew_bits(rv->csr_vtype) != 32) ||                    \
+            !rvv_validate_wide_reg(rv, ir->vd) ||                     \
+            !rvv_validate_data_reg(rv->csr_vtype, ir->vs2) ||         \
+            !rvv_wide_group_span(rv, &wide_span) ||                   \
+            rvv_cross_eew_overlap_illegal(ir->vd, wide_span, ir->vs2, \
+                                          narrow_span))               \
+            return rvv_trap_illegal_state(rv, 0);                     \
+        softfloat_exceptionFlags = 0;                                 \
+        set_rounding_mode(rv, rm);                                    \
+        rvv_exec_fp_wcvt(rv, ir, ir->vd, opfn);                       \
+        set_fflag(rv);                                                \
+    })
+
+/* Narrowing FP<->int conversion (vfncvt.*, V 1.0 §13.19): unary, reads vs2 at
+ * the wide EEW=2*SEW=64, writes vd at SEW=32. Same EEW validation as the
+ * narrowing shift ops (wide source, narrow dest). */
+#define RVV_FP_NCVT_OP(name, opfn, rm)                                  \
+    RVOP(name, {                                                        \
+        uint32_t wide_span;                                             \
+        uint32_t narrow_span = rvv_group_regs(rv->csr_vtype);           \
+        if (rvv_require_operable(rv))                                   \
+            return false;                                               \
+        if ((rvv_sew_bits(rv->csr_vtype) != 32) ||                      \
+            !rvv_wide_group_span(rv, &wide_span) ||                     \
+            !rvv_validate_data_reg(rv->csr_vtype, ir->vd) ||            \
+            !rvv_validate_wide_reg(rv, ir->vs2) ||                      \
+            rvv_cross_eew_overlap_illegal(ir->vd, narrow_span, ir->vs2, \
+                                          wide_span))                   \
+            return rvv_trap_illegal_state(rv, 0);                       \
+        softfloat_exceptionFlags = 0;                                   \
+        set_rounding_mode(rv, rm);                                      \
+        rvv_exec_fp_ncvt(rv, ir, ir->vd, opfn);                         \
+        set_fflag(rv);                                                  \
+    })
+
 #define RVV_FP32_VF_OP(name, opfn, needs_round)              \
     RVOP(name, {                                             \
         if (rvv_require_operable(rv))                        \
@@ -7864,6 +8030,47 @@ RVV_FP32_CVT_OP(vfcvt_f_xu_v, rvv_fp_cvt_xu_to_f32, 0x7);
 RVV_FP32_CVT_OP(vfcvt_f_x_v, rvv_fp_cvt_x_to_f32, 0x7);
 RVV_FP32_CVT_OP(vfcvt_rtz_xu_f_v, rvv_fp_cvt_f_to_xu32, 0x1);
 RVV_FP32_CVT_OP(vfcvt_rtz_x_f_v, rvv_fp_cvt_f_to_x32, 0x1);
+
+/* Widening conversions (vfwcvt.*, V 1.0 §13.18). FP32 source -> 64-bit dest:
+ * either int64 (x/xu, may saturate) or FP64 (f.f, always exact). int32 source
+ * -> FP64 (f.x/f.xu, always exact). rtz forms force round-to-zero. */
+RVV_FP_WCVT_OP(vfwcvt_xu_f_v, rvv_fp_wcvt_f_to_xu64, 0x7);
+RVV_FP_WCVT_OP(vfwcvt_x_f_v, rvv_fp_wcvt_f_to_x64, 0x7);
+RVV_FP_WCVT_OP(vfwcvt_f_xu_v, rvv_fp_wcvt_xu_to_f64, 0x7);
+RVV_FP_WCVT_OP(vfwcvt_f_x_v, rvv_fp_wcvt_x_to_f64, 0x7);
+RVV_FP_WCVT_OP(vfwcvt_f_f_v, rvv_fp_wcvt_f_to_f64, 0x7);
+RVV_FP_WCVT_OP(vfwcvt_rtz_xu_f_v, rvv_fp_wcvt_f_to_xu64, 0x1);
+RVV_FP_WCVT_OP(vfwcvt_rtz_x_f_v, rvv_fp_wcvt_f_to_x64, 0x1);
+
+/* Narrowing conversions (vfncvt.*, V 1.0 §13.19). 64-bit source -> FP32 dest.
+ * All narrowing variants may round. The rod (round-to-odd) form is special:
+ * it forces softfloat's round-to-odd, used for double-rounding-safe FP64->FP32
+ * narrowing, so it bypasses set_rounding_mode (round-odd is not a RISC-V frm
+ * code). */
+RVV_FP_NCVT_OP(vfncvt_xu_f_w, rvv_fp_ncvt_f_to_xu32, 0x7);
+RVV_FP_NCVT_OP(vfncvt_x_f_w, rvv_fp_ncvt_f_to_x32, 0x7);
+RVV_FP_NCVT_OP(vfncvt_f_xu_w, rvv_fp_ncvt_xu_to_f32, 0x7);
+RVV_FP_NCVT_OP(vfncvt_f_x_w, rvv_fp_ncvt_x_to_f32, 0x7);
+RVV_FP_NCVT_OP(vfncvt_f_f_w, rvv_fp_ncvt_f_to_f32, 0x7);
+RVV_FP_NCVT_OP(vfncvt_rtz_xu_f_w, rvv_fp_ncvt_f_to_xu32, 0x1);
+RVV_FP_NCVT_OP(vfncvt_rtz_x_f_w, rvv_fp_ncvt_f_to_x32, 0x1);
+
+RVOP(vfncvt_rod_f_f_w, {
+    uint32_t wide_span;
+    uint32_t narrow_span = rvv_group_regs(rv->csr_vtype);
+    if (rvv_require_operable(rv))
+        return false;
+    if ((rvv_sew_bits(rv->csr_vtype) != 32) ||
+        !rvv_wide_group_span(rv, &wide_span) ||
+        !rvv_validate_data_reg(rv->csr_vtype, ir->vd) ||
+        !rvv_validate_wide_reg(rv, ir->vs2) ||
+        rvv_cross_eew_overlap_illegal(ir->vd, narrow_span, ir->vs2, wide_span))
+        return rvv_trap_illegal_state(rv, 0);
+    softfloat_exceptionFlags = 0;
+    softfloat_roundingMode = softfloat_round_odd;
+    rvv_exec_fp_ncvt(rv, ir, ir->vd, rvv_fp_ncvt_f_to_f32);
+    set_fflag(rv);
+})
 
 RVOP(vfrsub_vf, {
     uint32_t vlmax = rvv_vlmax(rv->csr_vtype);
